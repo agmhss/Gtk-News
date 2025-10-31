@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Daily News</title>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <style>
@@ -126,7 +126,8 @@ function chooseThumb(it) {
   return parseFirstImg(desc);
 }
 async function fetchRSS(url) {
-  const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+  const proxy = `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`;
+  const res = await fetch(proxy);
   if (!res.ok) throw new Error("fetch failed");
   return res.text();
 }
@@ -142,7 +143,7 @@ async function parseRSS(url) {
       image: chooseThumb(it),
       source: new URL(url).host
     }));
-  } catch { return []; }
+  } catch (e) { console.warn("Feed failed", url, e); return []; }
 }
 async function loadAll() {
   const lists = await Promise.all([
@@ -248,23 +249,27 @@ function saveAsPDF(news) {
   doc.save(`Daily_News_${date.replace(/\\s+/g,'_')}.pdf`);
 }
 (async ()=>{
-  const all = await loadAll();
-  renderNews(all);
-  const play=document.getElementById('playBtn'),
-        pause=document.getElementById('pauseBtn'),
-        resume=document.getElementById('resumeBtn'),
-        stop=document.getElementById('stopBtn'),
-        genderSel=document.getElementById('voiceGender'),
-        speed=document.getElementById('speedRange'),
-        label=document.getElementById('speedLabel'),
-        pdfBtn=document.getElementById('pdfBtn');
-  let rate=parseFloat(speed.value);
-  speed.oninput=()=>{rate=parseFloat(speed.value); label.textContent=rate.toFixed(2)+'×';};
-  play.onclick=()=>speakNews(all,rate,genderSel.value);
-  pause.onclick=()=>speechSynthesis.pause();
-  resume.onclick=()=>speechSynthesis.resume();
-  stop.onclick=()=>speechSynthesis.cancel();
-  pdfBtn.onclick=()=>saveAsPDF(all);
+  try {
+    const all = await loadAll();
+    renderNews(all);
+    const play=document.getElementById('playBtn'),
+          pause=document.getElementById('pauseBtn'),
+          resume=document.getElementById('resumeBtn'),
+          stop=document.getElementById('stopBtn'),
+          genderSel=document.getElementById('voiceGender'),
+          speed=document.getElementById('speedRange'),
+          label=document.getElementById('speedLabel'),
+          pdfBtn=document.getElementById('pdfBtn');
+    let rate=parseFloat(speed.value);
+    speed.oninput=()=>{rate=parseFloat(speed.value); label.textContent=rate.toFixed(2)+'×';};
+    play.onclick=()=>speakNews(all,rate,genderSel.value);
+    pause.onclick=()=>speechSynthesis.pause();
+    resume.onclick=()=>speechSynthesis.resume();
+    stop.onclick=()=>speechSynthesis.cancel();
+    pdfBtn.onclick=()=>saveAsPDF(all);
+  } catch (e) {
+    document.getElementById("news").innerHTML = "<p style='color:red'>Failed to load news feeds. Please try again later.</p>";
+  }
 })();
 </script>
 </body>
