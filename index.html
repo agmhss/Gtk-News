@@ -1,286 +1,271 @@
-import React, { useEffect, useRef, useState } from "react";
-import jsPDF from "jspdf"; // NOTE: Removed jspdf-autotable to fix doc.autoTable error
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Daily News</title>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<style>
+  body {
+    font-family: "Segoe UI", sans-serif;
+    background: #f8fbff;
+    color: #111;
+    margin: 0;
+    padding: 0;
+  }
+  header {
+    background: #2b6bff;
+    color: #fff;
+    padding: 15px;
+    font-size: 22px;
+    font-weight: bold;
+    text-align: center;
+  }
+  #controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+    margin: 15px;
+  }
+  button, select, input[type=range] {
+    font-size: 15px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+  }
+  button {
+    background: #2b6bff;
+    color: white;
+    border: none;
+  }
+  button:hover { background: #1d4ed8; }
+  #news {
+    max-width: 800px;
+    margin: auto;
+    padding: 10px;
+  }
+  section { margin-top: 25px; }
+  h2 { border-bottom: 2px solid #ddd; padding-bottom: 4px; }
+  article {
+    display: flex;
+    gap: 10px;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 8px;
+    background: white;
+    margin-bottom: 10px;
+  }
+  article img {
+    width: 90px;
+    height: 90px;
+    object-fit: cover;
+    border-radius: 6px;
+  }
+  .meta {
+    font-size: 12px;
+    color: #555;
+  }
+  a { color: #2b6bff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>🗞️ Daily News</header>
 
-/******************** CONFIG ********************/
+<div id="controls">
+  <button id="playBtn">▶ Play</button>
+  <button id="pauseBtn">⏸ Pause</button>
+  <button id="resumeBtn">⏵ Resume</button>
+  <button id="stopBtn">⏹ Stop</button>
+  <label>Voice:
+    <select id="voiceGender">
+      <option value="male">Male</option>
+      <option value="female">Female</option>
+    </select>
+  </label>
+  <label>Speed:
+    <input id="speedRange" type="range" min="0.7" max="1.3" step="0.05" value="0.9" />
+    <span id="speedLabel">0.9×</span>
+  </label>
+  <button id="pdfBtn">💾 Save as PDF</button>
+</div>
+
+<div id="news">Loading authentic sources…</div>
+
+<script>
 const FEEDS = {
   regional: ["https://www.thehindu.com/news/national/tamil-nadu/feeder/default.rss"],
-  national: ["https://feeds.feedburner.com/ndtvnews-top-stories", "https://timesofindia.indiatimes.com/rssfeedstopstories.cms"],
-  international: ["https://feeds.bbci.co.uk/news/world/rss.xml"],
+  national: ["https://feeds.feedburner.com/ndtvnews-top-stories",
+             "https://timesofindia.indiatimes.com/rssfeedstopstories.cms"],
+  international: ["https://feeds.bbci.co.uk/news/world/rss.xml"]
 };
-
 const MIX = { regional: 0.5, national: 0.3, international: 0.2 };
 const TOTAL = 10;
 
-/******************** UTILITIES ********************/
 function stripHtml(html) {
   const div = document.createElement("div");
   div.innerHTML = html || "";
   return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
 }
-
-function dedupeByTitle(items, limit) {
-  const seen = new Set();
-  const out = [];
-  for (const it of items) {
-    const key = (it.title || "").toLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      out.push(it);
-    }
-    if (out.length >= limit) break;
-  }
-  return out;
+function parseFirstImg(html) {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  const img = div.querySelector("img");
+  return img ? img.src : "";
 }
-
-/******************** RSS LOADING ********************/
+function chooseThumb(it) {
+  const thumb = it.querySelector("media\\:thumbnail, thumbnail");
+  if (thumb?.getAttribute("url")) return thumb.getAttribute("url");
+  const content = it.querySelector("media\\:content");
+  if (content?.getAttribute("url")) return content.getAttribute("url");
+  const enclosure = it.querySelector("enclosure");
+  if (enclosure && (enclosure.getAttribute("type")||"").startsWith("image"))
+    return enclosure.getAttribute("url");
+  const desc = it.querySelector("description")?.textContent || "";
+  return parseFirstImg(desc);
+}
 async function fetchRSS(url) {
-  const proxied = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-  const res = await fetch(proxied);
-  if (!res.ok) throw new Error("Failed to load feed");
-  return await res.text();
+  const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+  if (!res.ok) throw new Error("fetch failed");
+  return res.text();
 }
-
 async function parseRSS(url) {
   try {
-    const text = await fetchRSS(url);
-    const xml = new DOMParser().parseFromString(text, "application/xml");
-    const items = Array.from(xml.querySelectorAll("item")).map((it, idx) => ({
-      id: `${url}#${idx}`,
+    const xml = new DOMParser().parseFromString(await fetchRSS(url), "application/xml");
+    return Array.from(xml.querySelectorAll("item")).map((it, i) => ({
+      id: url + "#" + i,
       title: stripHtml(it.querySelector("title")?.textContent || ""),
       description: stripHtml(it.querySelector("description")?.textContent || ""),
       link: it.querySelector("link")?.textContent || "",
       pubDate: it.querySelector("pubDate")?.textContent || "",
-      source: new URL(url).host,
+      image: chooseThumb(it),
+      source: new URL(url).host
     }));
-    return items;
-  } catch (e) {
-    console.warn("Feed failed:", url, e);
-    return [];
-  }
+  } catch { return []; }
 }
-
 async function loadAll() {
   const lists = await Promise.all([
     parseRSS(FEEDS.regional[0]),
-    parseRSS(FEEDS.national[0]),
-    parseRSS(FEEDS.international[0]),
+    parseRSS(FEEDS.national[0]).then(r => r.length ? r : parseRSS(FEEDS.national[1])),
+    parseRSS(FEEDS.international[0])
   ]);
+  const dedupe = (arr, lim) => {
+    const seen = new Set(); const out = [];
+    for (const a of arr) {
+      const k = a.title.toLowerCase();
+      if (!seen.has(k)) { seen.add(k); out.push(a); if (out.length>=lim) break; }
+    } return out;
+  };
   return {
-    regional: dedupeByTitle(lists[0], 5),
-    national: dedupeByTitle(lists[1], 3),
-    international: dedupeByTitle(lists[2], 2),
+    regional: dedupe(lists[0], Math.round(TOTAL*MIX.regional)||5),
+    national: dedupe(lists[1], Math.round(TOTAL*MIX.national)||3),
+    international: dedupe(lists[2], Math.round(TOTAL*MIX.international)||2)
   };
 }
-
-function buildScript(curated) {
-  const dateStr = new Date().toLocaleDateString("en-IN", { year: "numeric", month: "long", day: "numeric" });
-  let script = `Good day. This is your Daily News bulletin for ${dateStr}. `;
-  const sections = [
-    ["Regional – Tamil Nadu", curated.regional],
-    ["National – India", curated.national],
-    ["International", curated.international],
-  ];
-  for (const [title, items] of sections) {
-    script += `${title}: `;
-    items.forEach((it, i) => {
-      const headline = (it.title || "").replace(/\s+/g, " ").trim();
-      const desc = (it.description || "").split(/(?<=[.?!])\s+/)[0] || "";
-      const add = desc && desc.length > 24 ? `${headline}. ${desc}` : `${headline}.`;
-      script += `${i + 1}. ${add} `;
-    });
-  }
-  script += "That concludes the Daily News bulletin.";
-  return script;
-}
-
-/******************** PDF (no autoTable) ********************/
-function saveAsPDF({ title = "Daily News", sections = [] }) {
-  const doc = new jsPDF({ orientation: "p", unit: "pt", format: "a4" });
-  const margin = 40;
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  let y = margin;
-
-  const dateStr = new Date().toLocaleDateString("en-IN", { year: "numeric", month: "long", day: "numeric" });
-
-  // Header
-  doc.setFont("Helvetica", "bold");
-  doc.setFontSize(18);
-  doc.text(`${title} – ${dateStr}`, margin, y);
-  y += 24;
-
-  const writeWrapped = (txt, fontSize = 12, bold = false) => {
-    doc.setFont("Helvetica", bold ? "bold" : "normal");
-    doc.setFontSize(fontSize);
-    const maxWidth = pageW - margin * 2;
-    const lines = doc.splitTextToSize(txt, maxWidth);
-    const lineHeight = fontSize + 4;
-    for (const line of lines) {
-      if (y > pageH - margin) {
-        doc.addPage();
-        y = margin;
+function renderNews(all) {
+  const container = document.getElementById("news");
+  container.innerHTML = "";
+  const createSection = (title, arr) => {
+    const sec = document.createElement("section");
+    const h2 = document.createElement("h2"); h2.textContent = title; sec.appendChild(h2);
+    arr.forEach(a => {
+      const art = document.createElement("article");
+      if (a.image) {
+        const img = document.createElement("img");
+        img.src = a.image; img.onerror = () => img.remove();
+        art.appendChild(img);
       }
-      doc.text(line, margin, y);
-      y += lineHeight;
-    }
-  };
-
-  for (const section of sections) {
-    if (!section?.items?.length) continue;
-    // Section title
-    writeWrapped(section.title, 14, true);
-    // Items
-    section.items.forEach((item, idx) => {
-      const prefix = `${idx + 1}. `;
-      writeWrapped(prefix + (item.title || ""), 12, true);
-      if (item.source || item.pubDate) {
-        const meta = `${item.source || ""}${item.pubDate ? " • " + new Date(item.pubDate).toLocaleString() : ""}`;
-        writeWrapped(meta, 10, false);
-      }
-      if (item.description) writeWrapped(item.description, 11, false);
-      if (item.link) writeWrapped(String(item.link), 10, false);
-      y += 6; // gap between stories
+      const div = document.createElement("div");
+      div.innerHTML = `
+        <div class='meta'>${a.source} ${a.pubDate? "• "+new Date(a.pubDate).toLocaleString():""}</div>
+        <h3>${a.title}</h3>
+        <p>${a.description}</p>
+        <a href='${a.link}' target='_blank'>Read more ↗</a>`;
+      art.appendChild(div);
+      sec.appendChild(art);
     });
-    y += 6; // gap between sections
-  }
-
-  doc.save(`Daily_News_${dateStr.replace(/\s+/g, '_')}.pdf`);
-}
-
-/******************** MAIN COMPONENT ********************/
-export default function DailyNewsApp() {
-  const [news, setNews] = useState({ regional: [], national: [], international: [] });
-  const [loading, setLoading] = useState(true);
-  const [rate, setRate] = useState(0.9);
-  const [voiceGender, setVoiceGender] = useState("male");
-  const utterRef = useRef(null);
-
-  useEffect(() => {
-    (async () => {
-      const all = await loadAll();
-      setNews(all);
-      setLoading(false);
-    })();
-  }, []);
-
-  const speak = () => {
-    const text = buildScript(news);
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "en-IN";
-    utter.rate = rate;
-    // Pick male/female voice more robustly
-    const voices = window.speechSynthesis.getVoices();
-    const prefer = voiceGender === "male"
-      ? ["Microsoft Heera - English (India)", "Google UK English Male", "Male"]
-      : ["Microsoft Neerja - English (India)", "Google UK English Female", "Female"];
-    const voice = voices.find(v => prefer.some(key => v.name.includes(key))) || voices[0];
-    if (voice) utter.voice = voice;
-    utter.pitch = voiceGender === "male" ? 0.95 : 1.05;
-
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utter);
-    utterRef.current = utter;
+    container.appendChild(sec);
   };
-
-  const pause = () => window.speechSynthesis.pause();
-  const resume = () => window.speechSynthesis.resume();
-  const stop = () => window.speechSynthesis.cancel();
-
-  const handleSavePDF = () => {
-    saveAsPDF({
-      title: "Daily News",
-      sections: [
-        { title: "Regional – Tamil Nadu", items: news.regional },
-        { title: "National – India", items: news.national },
-        { title: "International", items: news.international },
-      ],
+  createSection("Regional – Tamil Nadu", all.regional);
+  createSection("National – India", all.national);
+  createSection("International", all.international);
+}
+function buildScript(n) {
+  const date = new Date().toLocaleDateString("en-IN",{year:"numeric",month:"long",day:"numeric"});
+  const parts = [`Good day. This is your Daily News bulletin for ${date}.`];
+  const add = (label, arr) => {
+    if (!arr.length) return;
+    parts.push(`${label}.`);
+    arr.forEach((it,i)=>{
+      const desc = it.description.split(/(?<=[.?!])\\s+/)[0]||\"\"; 
+      parts.push(`${i+1}. ${it.title}. ${desc}`);
     });
   };
-
-  return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900">
-      <div className="max-w-3xl mx-auto p-4">
-        <header className="flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold">Daily News</h1>
-          <button onClick={handleSavePDF} className="px-3 py-1.5 rounded bg-blue-600 text-white">💾 Save as PDF</button>
-        </header>
-
-        {loading ? (
-          <p className="mt-6">Loading news...</p>
-        ) : (
-          <>
-            <div className="mt-4 flex flex-wrap gap-2 items-center">
-              <button onClick={speak} className="px-3 py-1.5 bg-green-600 text-white rounded">▶ Play</button>
-              <button onClick={() => window.speechSynthesis.pause()} className="px-3 py-1.5 border rounded">⏸ Pause</button>
-              <button onClick={() => window.speechSynthesis.resume()} className="px-3 py-1.5 border rounded">⏵ Resume</button>
-              <button onClick={() => window.speechSynthesis.cancel()} className="px-3 py-1.5 border rounded">⏹ Stop</button>
-              <div className="flex items-center gap-2 ml-4">
-                <label className="text-sm">Voice:</label>
-                <select value={voiceGender} onChange={(e) => setVoiceGender(e.target.value)} className="border rounded px-2 py-1 text-sm">
-                  <option value="male">Male</option>
-                  <option value="female">Female</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center gap-2">
-              <label className="text-sm">Speed:</label>
-              <input type="range" min={0.7} max={1.3} step={0.05} value={rate} onChange={(e) => setRate(parseFloat(e.target.value))} />
-              <span className="text-sm">{rate.toFixed(2)}×</span>
-            </div>
-
-            <NewsSection title="Regional – Tamil Nadu" items={news.regional} />
-            <NewsSection title="National – India" items={news.national} />
-            <NewsSection title="International" items={news.international} />
-          </>
-        )}
-      </div>
-    </div>
-  );
+  add("Regional – Tamil Nadu", n.regional);
+  add("National – India", n.national);
+  add("International", n.international);
+  parts.push("That concludes the Daily News bulletin.");
+  return parts;
 }
-
-function NewsSection({ title, items }) {
-  return (
-    <section className="mt-6">
-      <h2 className="text-lg font-semibold mb-2">{title}</h2>
-      <div className="mt-3 grid gap-3">
-        {items.map((a) => (
-          <article key={a.id} className="p-4 rounded-2xl border border-neutral-200 bg-white">
-            <div className="text-xs opacity-60 flex gap-2">
-              <span>{a.source || "Source"}</span>
-              {a.pubDate && <span>• {new Date(a.pubDate).toLocaleString()}</span>}
-            </div>
-            <h3 className="mt-1 font-semibold">{a.title}</h3>
-            {a.description && <p className="mt-1 text-sm opacity-90">{a.description}</p>}
-            {a.link && (
-              <a className="mt-2 inline-block text-sm underline" href={a.link} target="_blank" rel="noreferrer">
-                Read more ↗
-              </a>
-            )}
-          </article>
-        ))}
-        {items.length === 0 && (
-          <div className="p-4 rounded-2xl border border-neutral-200 bg-white text-sm">No items found.</div>
-        )}
-      </div>
-    </section>
-  );
+function speakNews(news, rate, gender) {
+  window.speechSynthesis.cancel();
+  const parts = buildScript(news);
+  const voices = window.speechSynthesis.getVoices();
+  const pref = gender==="male"?
+    ["Microsoft Heera - English (India)","Google UK English Male","Male"]:
+    ["Microsoft Neerja - English (India)","Google UK English Female","Female"];
+  const voice = voices.find(v=>pref.some(k=>v.name.includes(k)))||voices[0];
+  parts.forEach(seg=>{
+    const u = new SpeechSynthesisUtterance(seg);
+    u.lang="en-IN"; u.rate=rate; u.pitch=gender==="male"?0.95:1.05;
+    if(voice)u.voice=voice;
+    window.speechSynthesis.speak(u);
+  });
 }
-
-/******************** QUICK SELF-TESTS ********************/
-(function selfTests() {
-  try {
-    // Test PDF generation logic without autoTable
-    const tmp = new jsPDF({ unit: "pt" });
-    const hasSplit = typeof tmp.splitTextToSize === "function";
-    console.assert(hasSplit, "jsPDF.splitTextToSize should exist");
-
-    // Minimal content write test
-    const dateStr = new Date().toISOString().slice(0,10);
-    tmp.text(`TEST Daily News ${dateStr}` , 40, 40);
-    // No exception means pass
-    console.info("PDF basic write OK");
-  } catch (e) {
-    console.warn("PDF self-test failed:", e);
-  }
+function saveAsPDF(news) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:"pt"});
+  const margin=40, maxW=515; let y=margin;
+  const date=new Date().toLocaleDateString("en-IN",{year:\"numeric\",month:\"long\",day:\"numeric\"});
+  doc.setFontSize(18); doc.text(`Daily News – ${date}`, margin, y); y+=25;
+  const write=(txt,fs=12,bold=false)=>{
+    doc.setFont(undefined,bold?\"bold\":\"normal\"); doc.setFontSize(fs);
+    const lines=doc.splitTextToSize(txt,maxW); lines.forEach(line=>{
+      if(y>770){doc.addPage(); y=margin;}
+      doc.text(line, margin, y); y+=fs+4;
+    });
+  };
+  const add=(label,arr)=>{if(!arr.length)return;write(label,14,true);
+    arr.forEach((a,i)=>{write(`${i+1}. ${a.title}`,12,true);
+      if(a.source||a.pubDate)write(`${a.source||''}${a.pubDate?' • '+new Date(a.pubDate).toLocaleString():''}`,10);
+      if(a.description)write(a.description,11);
+      if(a.link)write(a.link,10); y+=6;});
+    y+=6;};
+  add("Regional – Tamil Nadu",news.regional);
+  add("National – India",news.national);
+  add("International",news.international);
+  doc.save(`Daily_News_${date.replace(/\\s+/g,'_')}.pdf`);
+}
+(async ()=>{
+  const all = await loadAll();
+  renderNews(all);
+  const play=document.getElementById('playBtn'),
+        pause=document.getElementById('pauseBtn'),
+        resume=document.getElementById('resumeBtn'),
+        stop=document.getElementById('stopBtn'),
+        genderSel=document.getElementById('voiceGender'),
+        speed=document.getElementById('speedRange'),
+        label=document.getElementById('speedLabel'),
+        pdfBtn=document.getElementById('pdfBtn');
+  let rate=parseFloat(speed.value);
+  speed.oninput=()=>{rate=parseFloat(speed.value); label.textContent=rate.toFixed(2)+'×';};
+  play.onclick=()=>speakNews(all,rate,genderSel.value);
+  pause.onclick=()=>speechSynthesis.pause();
+  resume.onclick=()=>speechSynthesis.resume();
+  stop.onclick=()=>speechSynthesis.cancel();
+  pdfBtn.onclick=()=>saveAsPDF(all);
 })();
+</script>
+</body>
+</html>
