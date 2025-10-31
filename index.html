@@ -92,17 +92,20 @@
 </div>
 
 <div id="news">Loading authentic sources…</div>
-
+  
 <script>
 const FEEDS = {
   regional: ["https://www.thehindu.com/news/national/tamil-nadu/feeder/default.rss"],
-  national: ["https://feeds.feedburner.com/ndtvnews-top-stories",
-             "https://timesofindia.indiatimes.com/rssfeedstopstories.cms"],
+  national: [
+    "https://feeds.feedburner.com/ndtvnews-top-stories",
+    "https://timesofindia.indiatimes.com/rssfeedstopstories.cms"
+  ],
   international: ["https://feeds.bbci.co.uk/news/world/rss.xml"]
 };
 const MIX = { regional: 0.5, national: 0.3, international: 0.2 };
 const TOTAL = 10;
 
+// --- Helper functions ---
 function stripHtml(html) {
   const div = document.createElement("div");
   div.innerHTML = html || "";
@@ -120,20 +123,25 @@ function chooseThumb(it) {
   const content = it.querySelector("media\\:content");
   if (content?.getAttribute("url")) return content.getAttribute("url");
   const enclosure = it.querySelector("enclosure");
-  if (enclosure && (enclosure.getAttribute("type")||"").startsWith("image"))
+  if (enclosure && (enclosure.getAttribute("type") || "").startsWith("image"))
     return enclosure.getAttribute("url");
   const desc = it.querySelector("description")?.textContent || "";
   return parseFirstImg(desc);
 }
+
+// --- FIXED RSS fetcher using allorigins.win ---
 async function fetchRSS(url) {
-  const proxy = `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`;
+  const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
   const res = await fetch(proxy);
   if (!res.ok) throw new Error("fetch failed");
-  return res.text();
+  const data = await res.json();
+  return data.contents; // allorigins wraps RSS in 'contents'
 }
+
 async function parseRSS(url) {
   try {
-    const xml = new DOMParser().parseFromString(await fetchRSS(url), "application/xml");
+    const xmlStr = await fetchRSS(url);
+    const xml = new DOMParser().parseFromString(xmlStr, "application/xml");
     return Array.from(xml.querySelectorAll("item")).map((it, i) => ({
       id: url + "#" + i,
       title: stripHtml(it.querySelector("title")?.textContent || ""),
@@ -143,8 +151,12 @@ async function parseRSS(url) {
       image: chooseThumb(it),
       source: new URL(url).host
     }));
-  } catch (e) { console.warn("Feed failed", url, e); return []; }
+  } catch (e) {
+    console.warn("Feed failed", url, e);
+    return [];
+  }
 }
+
 async function loadAll() {
   const lists = await Promise.all([
     parseRSS(FEEDS.regional[0]),
@@ -152,34 +164,45 @@ async function loadAll() {
     parseRSS(FEEDS.international[0])
   ]);
   const dedupe = (arr, lim) => {
-    const seen = new Set(); const out = [];
+    const seen = new Set();
+    const out = [];
     for (const a of arr) {
       const k = a.title.toLowerCase();
-      if (!seen.has(k)) { seen.add(k); out.push(a); if (out.length>=lim) break; }
-    } return out;
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push(a);
+        if (out.length >= lim) break;
+      }
+    }
+    return out;
   };
   return {
-    regional: dedupe(lists[0], Math.round(TOTAL*MIX.regional)||5),
-    national: dedupe(lists[1], Math.round(TOTAL*MIX.national)||3),
-    international: dedupe(lists[2], Math.round(TOTAL*MIX.international)||2)
+    regional: dedupe(lists[0], Math.round(TOTAL * MIX.regional) || 5),
+    national: dedupe(lists[1], Math.round(TOTAL * MIX.national) || 3),
+    international: dedupe(lists[2], Math.round(TOTAL * MIX.international) || 2)
   };
 }
+
+// --- Rendering + Voice + PDF (unchanged) ---
 function renderNews(all) {
   const container = document.getElementById("news");
   container.innerHTML = "";
   const createSection = (title, arr) => {
     const sec = document.createElement("section");
-    const h2 = document.createElement("h2"); h2.textContent = title; sec.appendChild(h2);
+    const h2 = document.createElement("h2");
+    h2.textContent = title;
+    sec.appendChild(h2);
     arr.forEach(a => {
       const art = document.createElement("article");
       if (a.image) {
         const img = document.createElement("img");
-        img.src = a.image; img.onerror = () => img.remove();
+        img.src = a.image;
+        img.onerror = () => img.remove();
         art.appendChild(img);
       }
       const div = document.createElement("div");
       div.innerHTML = `
-        <div class='meta'>${a.source} ${a.pubDate? "• "+new Date(a.pubDate).toLocaleString():""}</div>
+        <div class='meta'>${a.source} ${a.pubDate ? "• " + new Date(a.pubDate).toLocaleString() : ""}</div>
         <h3>${a.title}</h3>
         <p>${a.description}</p>
         <a href='${a.link}' target='_blank'>Read more ↗</a>`;
@@ -192,6 +215,8 @@ function renderNews(all) {
   createSection("National – India", all.national);
   createSection("International", all.international);
 }
+
+// --- Voice + PDF (same as before) ---
 function buildScript(n) {
   const date = new Date().toLocaleDateString("en-IN",{year:"numeric",month:"long",day:"numeric"});
   const parts = [`Good day. This is your Daily News bulletin for ${date}.`];
@@ -199,7 +224,7 @@ function buildScript(n) {
     if (!arr.length) return;
     parts.push(`${label}.`);
     arr.forEach((it,i)=>{
-      const desc = it.description.split(/(?<=[.?!])\\s+/)[0]||\"\"; 
+      const desc = it.description.split(/(?<=[.?!])\s+/)[0] || "";
       parts.push(`${i+1}. ${it.title}. ${desc}`);
     });
   };
@@ -209,14 +234,15 @@ function buildScript(n) {
   parts.push("That concludes the Daily News bulletin.");
   return parts;
 }
+
 function speakNews(news, rate, gender) {
   window.speechSynthesis.cancel();
   const parts = buildScript(news);
   const voices = window.speechSynthesis.getVoices();
-  const pref = gender==="male"?
-    ["Microsoft Heera - English (India)","Google UK English Male","Male"]:
-    ["Microsoft Neerja - English (India)","Google UK English Female","Female"];
-  const voice = voices.find(v=>pref.some(k=>v.name.includes(k)))||voices[0];
+  const pref = gender==="male" ?
+    ["Microsoft Heera", "Google UK English Male", "Male"] :
+    ["Microsoft Neerja", "Google UK English Female", "Female"];
+  const voice = voices.find(v=>pref.some(k=>v.name.includes(k))) || voices[0];
   parts.forEach(seg=>{
     const u = new SpeechSynthesisUtterance(seg);
     u.lang="en-IN"; u.rate=rate; u.pitch=gender==="male"?0.95:1.05;
@@ -224,15 +250,17 @@ function speakNews(news, rate, gender) {
     window.speechSynthesis.speak(u);
   });
 }
+
 function saveAsPDF(news) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({unit:"pt"});
   const margin=40, maxW=515; let y=margin;
-  const date=new Date().toLocaleDateString("en-IN",{year:\"numeric\",month:\"long\",day:\"numeric\"});
+  const date=new Date().toLocaleDateString("en-IN",{year:"numeric",month:"long",day:"numeric"});
   doc.setFontSize(18); doc.text(`Daily News – ${date}`, margin, y); y+=25;
   const write=(txt,fs=12,bold=false)=>{
-    doc.setFont(undefined,bold?\"bold\":\"normal\"); doc.setFontSize(fs);
-    const lines=doc.splitTextToSize(txt,maxW); lines.forEach(line=>{
+    doc.setFont(undefined,bold?"bold":"normal"); doc.setFontSize(fs);
+    const lines=doc.splitTextToSize(txt,maxW);
+    lines.forEach(line=>{
       if(y>770){doc.addPage(); y=margin;}
       doc.text(line, margin, y); y+=fs+4;
     });
@@ -246,8 +274,10 @@ function saveAsPDF(news) {
   add("Regional – Tamil Nadu",news.regional);
   add("National – India",news.national);
   add("International",news.international);
-  doc.save(`Daily_News_${date.replace(/\\s+/g,'_')}.pdf`);
+  doc.save(`Daily_News_${date.replace(/\s+/g,'_')}.pdf`);
 }
+
+// --- Initialize ---
 (async ()=>{
   try {
     const all = await loadAll();
@@ -271,6 +301,6 @@ function saveAsPDF(news) {
     document.getElementById("news").innerHTML = "<p style='color:red'>Failed to load news feeds. Please try again later.</p>";
   }
 })();
-</script>
+    </script>
 </body>
 </html>
