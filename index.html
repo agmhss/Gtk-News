@@ -92,8 +92,7 @@
 </div>
 
 <div id="news">Loading authentic sources…</div>
-  
-<script>
+  <script>
 const FEEDS = {
   regional: ["https://www.thehindu.com/news/national/tamil-nadu/feeder/default.rss"],
   national: [
@@ -129,13 +128,13 @@ function chooseThumb(it) {
   return parseFirstImg(desc);
 }
 
-// --- FIXED RSS fetcher using allorigins.win ---
+// --- RSS fetcher ---
 async function fetchRSS(url) {
   const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
   const res = await fetch(proxy);
   if (!res.ok) throw new Error("fetch failed");
   const data = await res.json();
-  return data.contents; // allorigins wraps RSS in 'contents'
+  return data.contents;
 }
 
 async function parseRSS(url) {
@@ -183,7 +182,7 @@ async function loadAll() {
   };
 }
 
-// --- Rendering + Voice + PDF (unchanged) ---
+// --- Rendering ---
 function renderNews(all) {
   const container = document.getElementById("news");
   container.innerHTML = "";
@@ -216,7 +215,7 @@ function renderNews(all) {
   createSection("International", all.international);
 }
 
-// --- Voice + PDF (same as before) ---
+// --- Build readable script ---
 function buildScript(n) {
   const date = new Date().toLocaleDateString("en-IN",{year:"numeric",month:"long",day:"numeric"});
   const parts = [`Good day. This is your Daily News bulletin for ${date}.`];
@@ -231,26 +230,49 @@ function buildScript(n) {
   add("Regional – Tamil Nadu", n.regional);
   add("National – India", n.national);
   add("International", n.international);
-  parts.push("That concludes the Daily News bulletin.");
+  parts.push("That concludes the Daily News bulletin. Have a great day ahead!");
   return parts;
+}
+
+// --- Voice setup ---
+let allVoices = [];
+function loadVoices() {
+  allVoices = window.speechSynthesis.getVoices();
+}
+window.speechSynthesis.onvoiceschanged = loadVoices;
+
+function getVoice(gender) {
+  if (!allVoices.length) loadVoices();
+  const femaleNames = ["Google UK English Female","Microsoft Zira","Samantha","Neerja"];
+  const maleNames = ["Google UK English Male","Microsoft David","Alex","Heera"];
+  const list = gender==="male"?maleNames:femaleNames;
+  return allVoices.find(v => list.some(n => v.name.includes(n))) ||
+         allVoices.find(v => v.lang.startsWith("en")) || allVoices[0];
 }
 
 function speakNews(news, rate, gender) {
   window.speechSynthesis.cancel();
   const parts = buildScript(news);
-  const voices = window.speechSynthesis.getVoices();
-  const pref = gender==="male" ?
-    ["Microsoft Heera", "Google UK English Male", "Male"] :
-    ["Microsoft Neerja", "Google UK English Female", "Female"];
-  const voice = voices.find(v=>pref.some(k=>v.name.includes(k))) || voices[0];
-  parts.forEach(seg=>{
+  const voice = getVoice(gender);
+  const eagerPitch = gender==="male" ? 1.0 : 1.15;
+  const eagerRate = rate;
+  parts.forEach((seg,i)=>{
     const u = new SpeechSynthesisUtterance(seg);
-    u.lang="en-IN"; u.rate=rate; u.pitch=gender==="male"?0.95:1.05;
-    if(voice)u.voice=voice;
+    u.lang = "en-IN";
+    u.voice = voice;
+    u.rate = eagerRate;
+    u.pitch = eagerPitch;
+    u.volume = 1;
+    // Add slight pauses between segments
+    u.onend = () => {
+      if (i < parts.length - 1 && !window.speechSynthesis.speaking)
+        window.speechSynthesis.resume();
+    };
     window.speechSynthesis.speak(u);
   });
 }
 
+// --- PDF ---
 function saveAsPDF(news) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({unit:"pt"});
@@ -301,6 +323,6 @@ function saveAsPDF(news) {
     document.getElementById("news").innerHTML = "<p style='color:red'>Failed to load news feeds. Please try again later.</p>";
   }
 })();
-    </script>
+</script>.
 </body>
 </html>
