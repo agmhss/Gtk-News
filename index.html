@@ -1,3 +1,4 @@
+Modify the following code to get the news as a pdf page in one page, max. Url is not required, just the news will do in the pdf.
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -28,7 +29,7 @@
     justify-content: center;
     margin: 15px;
   }
-  button, input[type=range] {
+  button, select, input[type=range] {
     font-size: 15px;
     padding: 6px 10px;
     border-radius: 6px;
@@ -62,6 +63,12 @@
     object-fit: cover;
     border-radius: 6px;
   }
+  .meta {
+    font-size: 12px;
+    color: #555;
+  }
+  a { color: #2b6bff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -99,10 +106,33 @@ function stripHtml(html) {
   div.innerHTML = html || "";
   return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
 }
-function fetchRSS(url) {
-  const proxy = `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`;
-  return fetch(proxy).then(res => res.text());
+function parseFirstImg(html) {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  const img = div.querySelector("img");
+  return img ? img.src : "";
 }
+function chooseThumb(it) {
+  const thumb = it.querySelector("media\\:thumbnail, thumbnail");
+  if (thumb?.getAttribute("url")) return thumb.getAttribute("url");
+  const content = it.querySelector("media\\:content");
+  if (content?.getAttribute("url")) return content.getAttribute("url");
+  const enclosure = it.querySelector("enclosure");
+  if (enclosure && (enclosure.getAttribute("type") || "").startsWith("image"))
+    return enclosure.getAttribute("url");
+  const desc = it.querySelector("description")?.textContent || "";
+  return parseFirstImg(desc);
+}
+
+// --- RSS Fetch ---
+async function fetchRSS(url) {
+  const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+  const res = await fetch(proxy);
+  if (!res.ok) throw new Error("fetch failed");
+  const data = await res.json();
+  return data.contents;
+}
+
 async function parseRSS(url) {
   try {
     const xmlStr = await fetchRSS(url);
@@ -110,13 +140,18 @@ async function parseRSS(url) {
     return Array.from(xml.querySelectorAll("item")).map((it, i) => ({
       id: url + "#" + i,
       title: stripHtml(it.querySelector("title")?.textContent || ""),
-      description: stripHtml(it.querySelector("description")?.textContent || "")
+      description: stripHtml(it.querySelector("description")?.textContent || ""),
+      link: it.querySelector("link")?.textContent || "",
+      pubDate: it.querySelector("pubDate")?.textContent || "",
+      image: chooseThumb(it),
+      source: new URL(url).host
     }));
   } catch (e) {
     console.warn("Feed failed", url, e);
     return [];
   }
 }
+
 async function loadAll() {
   const lists = await Promise.all([
     parseRSS(FEEDS.regional[0]),
@@ -124,10 +159,15 @@ async function loadAll() {
     parseRSS(FEEDS.international[0])
   ]);
   const dedupe = (arr, lim) => {
-    const seen = new Set(), out = [];
+    const seen = new Set();
+    const out = [];
     for (const a of arr) {
       const k = a.title.toLowerCase();
-      if (!seen.has(k)) { seen.add(k); out.push(a); if (out.length >= lim) break; }
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push(a);
+        if (out.length >= lim) break;
+      }
     }
     return out;
   };
@@ -142,71 +182,107 @@ async function loadAll() {
 function renderNews(all) {
   const container = document.getElementById("news");
   container.innerHTML = "";
-  const makeSection = (title, arr) => {
+  const createSection = (title, arr) => {
     const sec = document.createElement("section");
-    const h2 = document.createElement("h2"); h2.textContent = title;
+    const h2 = document.createElement("h2");
+    h2.textContent = title;
     sec.appendChild(h2);
     arr.forEach(a => {
       const art = document.createElement("article");
+      if (a.image) {
+        const img = document.createElement("img");
+        img.src = a.image;
+        img.onerror = () => img.remove();
+        art.appendChild(img);
+      }
       const div = document.createElement("div");
-      div.innerHTML = `<h3>${a.title}</h3><p>${a.description}</p>`;
+      div.innerHTML = `
+        <div class='meta'>${a.source} ${a.pubDate ? "• " + new Date(a.pubDate).toLocaleString() : ""}</div>
+        <h3>${a.title}</h3>
+        <p>${a.description}</p>
+        <a href='${a.link}' target='_blank'>Read more ↗</a>`;
       art.appendChild(div);
       sec.appendChild(art);
     });
     container.appendChild(sec);
   };
-  makeSection("Regional – Tamil Nadu", all.regional);
-  makeSection("National – India", all.national);
-  makeSection("International", all.international);
+  createSection("Regional – Tamil Nadu", all.regional);
+  createSection("National – India", all.national);
+  createSection("International", all.international);
 }
 
-// --- Voice ---
+// --- Voice Setup ---
+let allVoices = [];
+function loadVoices() { allVoices = window.speechSynthesis.getVoices(); }
+window.speechSynthesis.onvoiceschanged = loadVoices;
+
+function getVoice(gender) {
+  if (!allVoices.length) loadVoices();
+  const femaleNames = ["Google UK English Female","Microsoft Zira","Samantha","Neerja"];
+  const maleNames = ["Google UK English Male","Microsoft David","Alex","Heera"];
+  const list = gender==="male"?maleNames:femaleNames;
+  return allVoices.find(v => list.some(n => v.name.includes(n))) ||
+         allVoices.find(v => v.lang.startsWith("en")) || allVoices[0];
+}
+
+// --- Script Builder ---
+function buildScript(n) {
+  const date = new Date().toLocaleDateString("en-IN",{year:"numeric",month:"long",day:"numeric"});
+  return [
+    { gender: "female", text: `Good day. This is your Gtk Daily News bulletin for ${date}.` },
+    { gender: "male", text: `Regional News – Tamil Nadu.` },
+    ...n.regional.map((a,i)=>({gender:"male", text:`${i+1}. ${a.title}. ${a.description.split(/[.?!]/)[0]}.`})),
+    { gender: "female", text: `National News – India.` },
+    ...n.national.map((a,i)=>({gender:"female", text:`${i+1}. ${a.title}. ${a.description.split(/[.?!]/)[0]}.`})),
+    { gender: "male", text: `International Headlines.` },
+    ...n.international.map((a,i)=>({gender:"male", text:`${i+1}. ${a.title}. ${a.description.split(/[.?!]/)[0]}.`})),
+    { gender: "female", text: `That concludes the Gtk Daily News bulletin. Have a great day ahead!` }
+  ];
+}
+
+// --- Speak ---
 function speakNews(news, rate) {
   window.speechSynthesis.cancel();
-  const voices = window.speechSynthesis.getVoices();
-  const voice = voices.find(v=>v.name.includes("Google UK English Male"))||voices[0];
-  const parts = [
-    "Good day. Here are your Gtk News headlines.",
-    ...news.regional.map(n=>"Regional: "+n.title+"."),
-    ...news.national.map(n=>"National: "+n.title+"."),
-    ...news.international.map(n=>"International: "+n.title+"."),
-    "That concludes the Gtk News bulletin."
-  ];
+  const parts = buildScript(news);
+  const maleVoice = getVoice("male");
+  const femaleVoice = getVoice("female");
+
   parts.forEach(p => {
-    const u = new SpeechSynthesisUtterance(p);
-    u.lang="en-IN"; u.rate=rate; u.voice=voice;
+    const u = new SpeechSynthesisUtterance(p.text);
+    u.lang = "en-IN";
+    u.voice = p.gender==="male" ? maleVoice : femaleVoice;
+    u.rate = rate;
+    u.pitch = p.gender==="male" ? 1.0 : 1.15;
+    u.volume = 1;
     window.speechSynthesis.speak(u);
   });
 }
 
-// --- PDF (single-page condensed) ---
+// --- PDF ---
 function saveAsPDF(news) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({unit:"pt"});
   const margin=40, maxW=515; let y=margin;
   const date=new Date().toLocaleDateString("en-IN",{year:"numeric",month:"long",day:"numeric"});
-  doc.setFontSize(16); doc.setFont("helvetica","bold");
-  doc.text(`Gtk Daily News – ${date}`, margin, y); y+=18;
-  const write=(txt,fs=11,bold=false)=>{
-    doc.setFont("helvetica", bold?"bold":"normal");
-    doc.setFontSize(fs);
+  doc.setFontSize(18); doc.text(`Daily News – ${date}`, margin, y); y+=25;
+  const write=(txt,fs=12,bold=false)=>{
+    doc.setFont(undefined,bold?"bold":"normal"); doc.setFontSize(fs);
     const lines=doc.splitTextToSize(txt,maxW);
-    for (const line of lines) {
-      if (y>800) break; // keep on one page
-      doc.text(line, margin, y); y+=fs+2;
-    }
+    lines.forEach(line=>{
+      if(y>770){doc.addPage(); y=margin;}
+      doc.text(line, margin, y); y+=fs+4;
+    });
   };
-  const add=(title,arr)=>{
-    if (!arr.length) return;
-    write(title,13,true);
-    arr.forEach((a,i)=>{ write(`${i+1}. ${a.title}`,11,true);
-      if(a.description) write(a.description,10); });
-    y+=4;
-  };
+  const add=(label,arr)=>{if(!arr.length)return;write(label,14,true);
+    arr.forEach((a,i)=>{write(`${i+1}. ${a.title}`,12,true);
+      if(a.source||a.pubDate)write(`${a.source||''}${a.pubDate?' • '+new Date(a.pubDate).toLocaleString():''}`,10);
+      if(a.description)write(a.description,11);
+      if(a.link)write(a.link,10); y+=6;});
+    y+=6;};
   add("Regional – Tamil Nadu",news.regional);
   add("National – India",news.national);
   add("International",news.international);
-  doc.save(`Gtk_News_${date.replace(/\s+/g,'_')}.pdf`);
+  doc.save(`Daily_News_${date.replace(/\s+/g,'_')}.pdf`);
 }
 
 // --- Init ---
