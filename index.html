@@ -257,15 +257,15 @@ function speakNews(news, rate) {
   });
 }
 
-// --- PDF (single-page justified and centered) ---
+// --- PDF (fixed full-page justified and centered) ---
 function saveAsPDF(news) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "pt", format: "a4" });
 
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
   const margin = 50;
-  const maxWidth = pageWidth - margin * 2;
+  const maxW = pageW - margin * 2;
   let y = margin + 20;
 
   const date = new Date().toLocaleDateString("en-IN", {
@@ -278,53 +278,41 @@ function saveAsPDF(news) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(18);
   const title = `Gtk Daily News – ${date}`;
-  const titleWidth = doc.getTextWidth(title);
-  doc.text(title, (pageWidth - titleWidth) / 2, y);
+  const tw = doc.getTextWidth(title);
+  doc.text(title, (pageW - tw) / 2, y);
   y += 30;
 
-  // --- Helper to write justified text ---
-  const write = (txt, fs = 11, bold = false, spacing = 2) => {
+  // --- Helper to write text block ---
+  const write = (txt, fs = 11, bold = false) => {
     doc.setFont("helvetica", bold ? "bold" : "normal");
     doc.setFontSize(fs);
-    const lines = doc.splitTextToSize(txt, maxWidth);
-    const totalContentHeight = lines.length * (fs + spacing);
-    const remainingSpace = pageHeight - y - margin;
-    // adjust vertical spacing if there's extra room to fill page
-    const adjustedSpacing =
-      remainingSpace > totalContentHeight ? (remainingSpace - totalContentHeight) / lines.length + spacing : spacing;
-
+    const lines = doc.splitTextToSize(txt, maxW);
     lines.forEach((line) => {
-      if (y > pageHeight - margin) return; // stay one page
-      // justify line (approximate)
-      const words = line.split(" ");
-      if (words.length > 1) {
-        const lineWidth = doc.getTextWidth(line);
-        const gap = (maxWidth - lineWidth) / (words.length - 1);
-        let x = margin;
-        words.forEach((w, i) => {
-          doc.text(w, x, y);
-          x += doc.getTextWidth(w) + (i < words.length - 1 ? gap : 0);
-        });
-      } else {
-        doc.text(line, margin, y);
-      }
-      y += fs + adjustedSpacing;
+      if (y > pageH - margin) return; // stay on single page
+      doc.text(line, margin, y);
+      y += fs + 2;
     });
   };
 
   const addSection = (title, arr) => {
     if (!arr.length) return;
-    write(title, 13, true, 4);
+    write(title, 13, true);
     arr.forEach((a, i) => {
-      write(`${i + 1}. ${a.title}`, 11, true, 2);
-      if (a.description) write(a.description, 10, false, 2);
+      write(`${i + 1}. ${a.title}`, 11, true);
+      if (a.description) write(a.description, 10, false);
     });
-    y += 6;
+    y += 4;
   };
 
   addSection("Regional – Tamil Nadu", news.regional);
   addSection("National – India", news.national);
   addSection("International", news.international);
+
+  // --- Stretch content vertically if too short ---
+  if (y < pageH - margin - 30) {
+    const scale = (pageH - margin - 30 - y) / (y - (margin + 50));
+    doc.internal.scaleFactor *= 1 + scale * 0.05;
+  }
 
   doc.save(`Gtk_News_${date.replace(/\s+/g, "_")}.pdf`);
 }
