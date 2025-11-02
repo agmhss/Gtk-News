@@ -257,7 +257,7 @@ function speakNews(news, rate) {
   });
 }
 
-// --- PDF (fixed full-page justified and centered) ---
+// --- PDF (fills one page naturally with balanced spacing) ---
 function saveAsPDF(news) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "pt", format: "a4" });
@@ -266,7 +266,6 @@ function saveAsPDF(news) {
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 50;
   const maxW = pageW - margin * 2;
-  let y = margin + 20;
 
   const date = new Date().toLocaleDateString("en-IN", {
     year: "numeric",
@@ -274,45 +273,56 @@ function saveAsPDF(news) {
     day: "numeric",
   });
 
-  // --- Title (centered) ---
+  // --- Title ---
   doc.setFont("helvetica", "bold");
   doc.setFontSize(18);
   const title = `Gtk Daily News – ${date}`;
-  const tw = doc.getTextWidth(title);
-  doc.text(title, (pageW - tw) / 2, y);
-  y += 30;
+  const titleWidth = doc.getTextWidth(title);
+  let y = margin + 10;
+  doc.text(title, (pageW - titleWidth) / 2, y);
+  y += 25;
 
-  // --- Helper to write text block ---
-  const write = (txt, fs = 11, bold = false) => {
-    doc.setFont("helvetica", bold ? "bold" : "normal");
-    doc.setFontSize(fs);
-    const lines = doc.splitTextToSize(txt, maxW);
-    lines.forEach((line) => {
-      if (y > pageH - margin) return; // stay on single page
-      doc.text(line, margin, y);
-      y += fs + 2;
-    });
-  };
-
-  const addSection = (title, arr) => {
+  // --- Gather all text content first ---
+  const textBlocks = [];
+  const add = (label, arr) => {
     if (!arr.length) return;
-    write(title, 13, true);
+    textBlocks.push({ text: label, size: 14, bold: true });
     arr.forEach((a, i) => {
-      write(`${i + 1}. ${a.title}`, 11, true);
-      if (a.description) write(a.description, 10, false);
+      textBlocks.push({ text: `${i + 1}. ${a.title}`, size: 11, bold: true });
+      if (a.description) textBlocks.push({ text: a.description, size: 10, bold: false });
     });
-    y += 4;
+    textBlocks.push({ text: " ", size: 4, bold: false });
   };
+  add("Regional – Tamil Nadu", news.regional);
+  add("National – India", news.national);
+  add("International", news.international);
 
-  addSection("Regional – Tamil Nadu", news.regional);
-  addSection("National – India", news.national);
-  addSection("International", news.international);
+  // --- Split into individual lines first ---
+  let lines = [];
+  const maxLineWidth = maxW;
+  textBlocks.forEach(block => {
+    doc.setFont("helvetica", block.bold ? "bold" : "normal");
+    doc.setFontSize(block.size);
+    const wrapped = doc.splitTextToSize(block.text, maxLineWidth);
+    wrapped.forEach(line => lines.push({ text: line, size: block.size, bold: block.bold }));
+  });
 
-  // --- Stretch content vertically if too short ---
-  if (y < pageH - margin - 30) {
-    const scale = (pageH - margin - 30 - y) / (y - (margin + 50));
-    doc.internal.scaleFactor *= 1 + scale * 0.05;
-  }
+  // --- Calculate spacing to fill exactly one page ---
+  const topSpace = y;
+  const bottomSpace = margin + 20;
+  const usableHeight = pageH - topSpace - bottomSpace;
+  const totalTextHeight = lines.reduce((sum, l) => sum + l.size + 2, 0);
+  const extraSpace = usableHeight - totalTextHeight;
+  const lineGap = extraSpace > 0 ? extraSpace / lines.length : 0;
+
+  // --- Print all lines with balanced spacing ---
+  lines.forEach(line => {
+    if (y > pageH - margin) return; // just in case
+    doc.setFont("helvetica", line.bold ? "bold" : "normal");
+    doc.setFontSize(line.size);
+    doc.text(line.text, margin, y);
+    y += line.size + 2 + lineGap;
+  });
 
   doc.save(`Gtk_News_${date.replace(/\s+/g, "_")}.pdf`);
 }
