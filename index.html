@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Gtk NEWS</title>
+<title>Today's NEWS</title>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <style>
   body {
@@ -71,7 +71,7 @@
 </style>
 </head>
 <body>
-<header>🗞️ Gtk NEWS 🗞️</header>
+<header>🗞️ Today's NEWS 🗞️</header>
 
 <div id="controls">
   <button id="playBtn">▶ Play</button>
@@ -228,14 +228,14 @@ function getVoice(gender) {
 function buildScript(n) {
   const date = new Date().toLocaleDateString("en-IN",{year:"numeric",month:"long",day:"numeric"});
   return [
-    { gender: "female", text: `Good day. This is your Gtk Daily News bulletin for ${date}.` },
+    { gender: "female", text: `Good day. This is your Daily News bulletin for ${date}.` },
     { gender: "male", text: `Regional News – Tamil Nadu.` },
     ...n.regional.map((a,i)=>({gender:"male", text:`${i+1}. ${a.title}. ${a.description.split(/[.?!]/)[0]}.`})),
     { gender: "female", text: `National News – India.` },
     ...n.national.map((a,i)=>({gender:"female", text:`${i+1}. ${a.title}. ${a.description.split(/[.?!]/)[0]}.`})),
     { gender: "male", text: `International Headlines.` },
     ...n.international.map((a,i)=>({gender:"male", text:`${i+1}. ${a.title}. ${a.description.split(/[.?!]/)[0]}.`})),
-    { gender: "female", text: `That concludes the Gtk Daily News bulletin. Have a great day ahead!` }
+    { gender: "female", text: `That concludes today's News bulletin. Have a great day ahead!` }
   ];
 }
 
@@ -276,7 +276,7 @@ function saveAsPDF(news) {
   // --- Title ---
   doc.setFont("helvetica", "bold");
   doc.setFontSize(18);
-  const title = `Gtk Daily News – ${date}`;
+  const title = `Daily News – ${date}`;
   const titleWidth = doc.getTextWidth(title);
   let y = margin + 10;
   doc.text(title, (pageW - titleWidth) / 2, y);
@@ -324,7 +324,7 @@ function saveAsPDF(news) {
     y += line.size + 2 + lineGap;
   });
 
-  doc.save(`Gtk_News_${date.replace(/\s+/g, "_")}.pdf`);
+  doc.save(`Today's_News_${date.replace(/\s+/g, "_")}.pdf`);
 }
 
 // --- Init ---
